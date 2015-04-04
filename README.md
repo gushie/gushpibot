@@ -3,6 +3,17 @@ Utility for controlling and programming a Raspberry Pi Ryanteck robot with LCD d
 
 To run the program: `sudo ./gushpibot.py`
 
+To run a sequence of steps and exit: `sudo ./gushpibot.py "^^^>v<"
+* ^ forwards
+* v backwards
+* < left (one wheel forwards, one backwards)
+* { slow left (one wheel forwards, only)
+* > right
+* } slow right
+* # Take photo
+
+Each step will run for one second and then stop.
+
 Cursor keys to control the motors, and "." to stop.
 Page up/Page down to cycle through the menu and Enter to select a menu item.
 
