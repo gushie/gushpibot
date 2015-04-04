@@ -74,3 +74,5 @@ sudo pip install praw pyttsx
 23. MOTOR 2B
 24. LCD EN (LCD pin 6)
 25. LCD RS (LCD pin 4)
+
+Use this program at your own risk. I take no responsibility for any damage this may cause to your Raspberry Pi / Robot
