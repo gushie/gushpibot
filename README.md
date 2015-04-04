@@ -3,7 +3,7 @@ Utility for controlling and programming a Raspberry Pi Ryanteck robot with LCD d
 
 To run the program: `sudo ./gushpibot.py`
 
-To run a sequence of steps and exit: `sudo ./gushpibot.py "^^^>v<"
+To run a sequence of steps and exit: `sudo ./gushpibot.py "^^^>v<"`
 * ^ forwards
 * v backwards
 * < left (one wheel forwards, one backwards)
