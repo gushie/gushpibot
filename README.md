@@ -56,6 +56,9 @@ sudo apt-get install alsa-utils espeak mplayer python-pip
 sudo pip install praw pyttsx
 ```
 
+Audio file support requires the 'mplayer' utility. 
+It will index all *.wav and *.mp3 files in the current folder
+
 #### Default GPIO PIN assigments (Model B revision 1)
 0. ECHO SEND
 1.
