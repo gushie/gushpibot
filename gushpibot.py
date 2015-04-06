@@ -1,6 +1,6 @@
 #!/usr/bin/python
 """
-Copyright 2015 Jonathan Corwin 
+Copyright 2015 Jonathan Corwin
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,13 +14,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License
 """
-
 import sys
 import os
 import time
 import collections
 import curses
-from subprocess import call
+from subprocess import call, Popen, PIPE
 import RPi.GPIO as GPIO
 try:
     # sudo apt-get install cwiid-python
@@ -52,8 +51,8 @@ WII_AVAILABLE = CWIID_AVAILABLE
 LCD_AVAILABLE = ADAFRUITLCD_AVAILABLE
 WEBCAM_AVAILABLE = True
 ECHO_AVAILABLE = True
-# This might cause problems. Set to False if so
 SPEECH_AVAILABLE = TTSX_AVAILABLE
+AUDIO_AVAILABLE = True
 
 """
 Default GPIO PIN assigments (Model B revision 1)
@@ -102,6 +101,8 @@ class Controller(object):
             self.create_echo()
         if SPEECH_AVAILABLE:
             self.create_speech()
+        if AUDIO_AVAILABLE:
+            self.create_audio()
         self.create_keyboard()
         self.update_menu()
         self.display.display_at(1, 0, "Init complete")
@@ -116,6 +117,7 @@ class Controller(object):
         else:
             self.display = ConsoleDisplay()
         self.display.display("GushPiBot...")
+        self.display_ip()
         self.add_component("Display", self.display)
 
     def create_wheels(self):
@@ -159,6 +161,7 @@ class Controller(object):
         self.wiimote.handlers["HOME"].add(self.menu.select)
         self.wiimote.handlers["MINUS"].add(self.menu.prev)
         self.wiimote.handlers["PLUS"].add(self.menu.next)
+        self.wiimote.stop_handler = self.wheels.stop
         self.add_component("Wiimote", self.wiimote)
 
     def create_speech(self):
@@ -166,6 +169,10 @@ class Controller(object):
         self.speech.speak("Hello. I am Gush Pi Bot.")
         self.wheels.speech_handler.add(self.speech.speak)
         self.add_component("Speech", self.speech)
+
+    def create_audio(self):
+        self.audio = Audio()
+        self.add_component("Audio", self.audio)
 
     def create_echo(self):
         self.echo = Echo(self.display)
@@ -199,8 +206,10 @@ class Controller(object):
     def update_menu(self):
         for item in self.components:
             item.update_menu(self.menu)
-        self.menu.add("Exit", self.exit)
-        self.menu.add("Shutdown RasPi", self.pi_shutdown)
+        menu = self.menu.add_folder("System")
+        self.menu.add_function("Exit", self.exit, menu)
+        self.menu.add_function("Shutdown RasPi", self.pi_shutdown, menu)
+        self.menu.add_function("IP Address", self.display_ip, menu)
         try:
             self.menu.speech = self.speech
         except AttributeError:
@@ -217,6 +226,11 @@ class Controller(object):
             while self.loop_cycle():
                 time.sleep(0.1)
 
+    def display_ip(self):
+        p = Popen("hostname -I", shell=True, stdout=PIPE)
+        output = p.communicate()[0].split("\n")[0]
+        self.display.display_at(1, 0, output.ljust(16))
+
     def exit(self):
         self.display.display("GushPiBot...\nExiting...")
         self.active = False
@@ -228,7 +242,10 @@ class Controller(object):
 
     def cleanup(self):
         for item in self.components:
-            item.cleanup()
+            try:
+                item.cleanup()
+            except:
+                pass
 
     def pi_shutdown(self):
         self.display.display("Pi Shutdown")
@@ -241,47 +258,72 @@ class Controller(object):
 class Menu(object):
 
     class MenuItem(object):
-        def __init__(self, name, func, select_next):
+        def __init__(self, name, func, folder):
             self.name = name
             self.func = func
-            self.select_next = select_next
+            self.folder = folder
 
         def fire(self):
-            self.func()
+            if self.func:
+                self.func()
+
+    class MenuList(object):
+        def __init__(self, parent=None):
+            self.options = []
+            self.parent = parent
+
+        def add(self, name, func=None, folder=None):
+            self.options.append(Menu.MenuItem(name, func, folder))
 
     def __init__(self, display, speech=None):
-        self.options = []
+        self.root = Menu.MenuList(self)
+        self.menu = self.root
         self.display = display
         self.speech = speech
-        self.current = 0
+        self.option = 0
 
-    def add(self, name, func, select_next=-1):
-        self.options.append(Menu.MenuItem(name, func, select_next))
-        return len(self.options) - 1
+    def add_folder(self, name, folder=None):
+        if folder is None:
+            folder = self.root
+        new_folder = Menu.MenuList()
+        new_folder.add("Back", folder=folder)
+        folder.add(name + "/", folder=new_folder)
+        return new_folder
+
+    def add_function(self, name, func, folder=None):
+        if folder is None:
+            folder = self.root
+        folder.add(name, func=func)
 
     def current_item(self):
-        return self.options[self.current]
+        return self.menu.options[self.option]
 
     def prev(self):
-        self.current -= 1
-        if self.current < 0:
-            self.current = len(self.options) - 1
+        self.option -= 1
+        if self.option < 0:
+            self.option = len(self.menu.options) - 1
+            self.display.reset()
         self.notify()
 
     def next(self):
-        self.current += 1
-        if self.current == len(self.options):
-            self.current = 0
+        self.option += 1
+        if self.option == len(self.menu.options):
+            self.option = 0
+            self.display.reset()
         self.notify()
 
     def notify(self):
         self.display.display_at(0, 0, self.current_item().name.ljust(16))
-        #self.speech.speak(self.current_item().name)
+        if self.speech:
+            self.speech.speak(self.current_item().name)
 
     def select(self):
-        self.current_item().fire()
-        if self.current_item().select_next >= 0:
-            self.current = self.current_item().select_next
+        if self.current_item().folder:
+            self.menu = self.current_item().folder
+            self.option = 0
+            self.notify()
+        else:
+            self.current_item().fire()
 
 class Component(object):
 
@@ -383,18 +425,19 @@ class Program(Component):
         if instruction in self.commands.keys():
             self.instructions.append(instruction)
 
-    def delete_instruction(self, instruction, step=-1):
+    def delete_instruction(self, step=-1):
         del self.instructions[step]
 
     def update_menu(self, menu):
-        view_cmd = menu.add("View Program", self.view)
+        folder = menu.add_folder("Program")
+        menu.add_function("View Program", self.view, folder)
         for command in self.commands:
-            menu.add("Add " + self.commands[command].name,
-                    lambda c=command: self.add_instruction(self.commands[c].shortcut), view_cmd)
-        menu.add("Delete Step", self.delete_instruction, view_cmd)
-        run_cmd = menu.add("Run Program", self.run)
-        menu.add("Stop Program", self.stop, run_cmd)
-        menu.add("Clear Program", self.clear, view_cmd)
+            menu.add_function("Add " + self.commands[command].name,
+                    lambda c=command: self.add_instruction(self.commands[c].shortcut), folder)
+        menu.add_function("Delete Step", self.delete_instruction, folder)
+        menu.add_function("Run Program", self.run, folder)
+        menu.add_function("Stop Program", self.stop, folder)
+        menu.add_function("Clear Program", self.clear, folder)
 
     def stop(self):
         self.active = False
@@ -490,6 +533,10 @@ class ConsoleDisplay(Component):
         self.stdscr.keypad(0)
         curses.noecho()
         curses.endwin()
+
+    def reset(self):
+        self.cleanup()
+        self.__init__()
 
     def display(self, text):
         self.stdscr.clear()
@@ -588,13 +635,14 @@ class Wiimote(Component):
         self.handlers["MINUS"] = Wiimote.ButtonHandler(cwiid.BTN_MINUS)
         self.handlers["PLUS"] = Wiimote.ButtonHandler(cwiid.BTN_PLUS)
         self.handlers["HOME"] = Wiimote.ButtonHandler(cwiid.BTN_HOME)
+        self.stop_handler = None
 
     def cleanup(self):
         if self.wiim:
             self.wiim.close()
 
     def update_menu(self, menu):
-        menu.add("Sync Wiimote", self.sync)
+        menu.add_function("Sync Wiimote", self.sync)
 
     def sync(self):
         self.display.display("Press both 1+2\non Wiimote NOW")
@@ -609,6 +657,8 @@ class Wiimote(Component):
     def check(self):
         if not self.wiim:
             return
+        if self.stop_handler:
+            self.stop_handler()
         for button in self.handlers:
             if self.wiim.state["buttons"] & self.handlers[button].button_id:
                 self.handlers[button].fire()
@@ -630,7 +680,7 @@ class Echo(Component):
         self.active = False
 
     def update_menu(self, menu):
-        menu.add("Toggle Echo", self.toggle_active)
+        menu.add_function("Toggle Echo", self.toggle_active)
 
     def toggle_active(self):
         self.active = not self.active
@@ -683,7 +733,7 @@ class Webcam(Component):
         pass
 
     def update_menu(self, menu):
-        menu.add("Take Photo", self.take_photo)
+        menu.add_function("Take Photo", self.take_photo)
 
     def take_photo(self, filename="./gushpibot_pic.jpg"):
         call(["fswebcam", "-d", "/dev/video0", "-r", "640x480", "--no-banner", filename])
@@ -698,9 +748,33 @@ class Speech(Component):
     def cleanup(self):
         self.engine.stop()
 
+    def update_menu(self, menu):
+        menu.add_function("Take Photo", self.take_photo)
+
     def speak(self, message):
         self.engine.say(message)
         self.engine.runAndWait()
+
+class Audio(Component):
+    """
+    This class allows the robot to play audio
+    """
+    def __init__(self):
+        self.engine = pyttsx.init()
+
+    def cleanup(self):
+        self.engine.stop()
+
+    def update_menu(self, menu):
+        folder = menu.add_folder("Audio")
+        for file in os.listdir("."):
+            if file.endswith(".wav") or file.endswith(".mp3"):
+                filename = os.path.splitext(file)[0][0:11]
+                menu.add_function("Play " + filename, lambda x=file: self.play(x), folder)
+
+    def play(self, filename):
+        Popen(["mplayer", "-really-quiet", "-noconsolecontrols", filename])
+
 
 
 if __name__ == "__main__":
