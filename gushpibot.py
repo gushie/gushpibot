@@ -6,9 +6,13 @@ import time
 import collections
 import curses
 from subprocess import call, Popen, PIPE
+import threading
+import urlparse
+import BaseHTTPServer
+import SimpleHTTPServer
 import RPi.GPIO as GPIO
 try:
-    # sudo apt-get install cwiid-python
+    # sudo apt-get install python-cwiid
     # Python 2 only :(
     import cwiid
     CWIID_AVAILABLE = True
@@ -37,8 +41,11 @@ WII_AVAILABLE = CWIID_AVAILABLE
 LCD_AVAILABLE = ADAFRUITLCD_AVAILABLE
 WEBCAM_AVAILABLE = True
 ECHO_AVAILABLE = True
-SPEECH_AVAILABLE = TTSX_AVAILABLE
+SPEECH_AVAILABLE = False #TTSX_AVAILABLE
 AUDIO_AVAILABLE = True
+WEBCAM_PHOTO_FILE = "gushpibot_pic.jpg"
+WEBSERVER_AVAILABLE = True
+WEBSERVER_PORT = 80
 
 """
 Default GPIO PIN assigments (Model B revision 1)
@@ -89,6 +96,8 @@ class Controller(object):
             self.create_speech()
         if AUDIO_AVAILABLE:
             self.create_audio()
+        if WEBSERVER_AVAILABLE:
+            self.create_webserver()
         self.create_keyboard()
         self.update_menu()
         self.display.display_at(1, 0, "Init complete")
@@ -136,9 +145,8 @@ class Controller(object):
         self.wiimote = Wiimote(self.display)
         self.wiimote.handlers["UP"].add(self.wheels.forwards)
         self.wiimote.handlers["DOWN"].add(self.wheels.backwards)
-        # Yes, left and right transposed here, something is switched somewhere but haven't found out what yet
-        self.wiimote.handlers["LEFT"].add(self.wheels.right)
-        self.wiimote.handlers["RIGHT"].add(self.wheels.left)
+        self.wiimote.handlers["LEFT"].add(self.wheels.left)
+        self.wiimote.handlers["RIGHT"].add(self.wheels.right)
         self.wiimote.handlers["A"].add(self.wheels.stop)
         try:
             self.wiimote.handlers["B"].add(self.webcam.take_photo)
@@ -184,6 +192,24 @@ class Controller(object):
         except AttributeError:
             pass
         self.add_component("Keyboard", self.keyboard)
+
+    def create_webserver(self):
+        self.webserver = Webserver()
+        self.webserver.post_handlers["up"] = self.wheels.forwards
+        self.webserver.post_handlers["down"] = self.wheels.backwards
+        self.webserver.post_handlers["left"] = self.wheels.left
+        self.webserver.post_handlers["right"] = self.wheels.right
+        self.webserver.post_handlers["stop"] = self.wheels.stop
+        self.webserver.post_handlers["menu_next"] = self.menu.next
+        self.webserver.post_handlers["menu_prev"] = self.menu.prev
+        self.webserver.post_handlers["menu_select"] = self.menu.select
+        self.webserver.post_handlers["menu_text"] = self.menu.text
+        try:
+            self.webserver.post_handlers["photo"] = self.webcam.take_photo
+        except AttributeError:
+            pass
+        self.webserver.serve()
+        self.add_component("Webserver", self.webserver)
 
     def create_menu(self):
         self.display.display("GushPiBot...\nCreating menu")
@@ -298,10 +324,13 @@ class Menu(object):
             self.display.reset()
         self.notify()
 
+    def text(self):
+        return self.current_item().name
+
     def notify(self):
-        self.display.display_at(0, 0, self.current_item().name.ljust(16))
+        self.display.display_at(0, 0, self.text().ljust(16))
         if self.speech:
-            self.speech.speak(self.current_item().name)
+            self.speech.speak(self.text())
 
     def select(self):
         if self.current_item().folder:
@@ -487,21 +516,21 @@ class Wheels(Component):
         self.send_command([0, 1, 0, 1])
         self.speech_handler.fire("Going Backwards")
 
-    def left(self):
-        self.send_command([1, 0, 0, 1])
-        self.speech_handler.fire("Turning Left")
-
-    def slow_left(self):
-        self.send_command([1, 0, 0, 0])
-        self.speech_handler.fire("Turning Left Slowly")
-
     def right(self):
-        self.send_command([0, 1, 1, 0])
+        self.send_command([1, 0, 0, 1])
         self.speech_handler.fire("Turning Right")
 
     def slow_right(self):
-        self.send_command([0, 0, 1, 0])
+        self.send_command([1, 0, 0, 0])
         self.speech_handler.fire("Turning Right Slowly")
+
+    def left(self):
+        self.send_command([0, 1, 1, 0])
+        self.speech_handler.fire("Turning Left")
+
+    def slow_left(self):
+        self.send_command([0, 0, 1, 0])
+        self.speech_handler.fire("Turning Left Slowly")
 
 class ConsoleDisplay(Component):
     """
@@ -721,7 +750,7 @@ class Webcam(Component):
     def update_menu(self, menu):
         menu.add_function("Take Photo", self.take_photo)
 
-    def take_photo(self, filename="./gushpibot_pic.jpg"):
+    def take_photo(self, filename=WEBCAM_PHOTO_FILE):
         call(["fswebcam", "-d", "/dev/video0", "-r", "640x480", "--no-banner", filename])
 
 class Speech(Component):
@@ -761,7 +790,73 @@ class Audio(Component):
     def play(self, filename):
         Popen(["mplayer", "-really-quiet", "-noconsolecontrols", filename])
 
+class Webserver(Component):
+    class WebHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
+        def log_message(self, format, *args):
+            pass
+
+        def do_GET(self):
+            if self.path == "/index.html" or self.path == "/":
+                self.send_index()
+            else:
+                return SimpleHTTPServer.SimpleHTTPRequestHandler.do_GET(self)
+
+        def do_POST(self):
+            self.wfile.write(self.server.post_handlers[self.path[1:]]())
+
+        def send_index(self):
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.end_headers()
+            html = """
+<html><head><title>GushPiBot</title></head><body><h1>GushPiBot</h1>
+<script type="text/javascript">
+    function ajax(url){
+        req = new XMLHttpRequest();
+        req.open("POST", url, true);
+        req.onreadystatechange = function() { if (req.readyState == 4) { ajax_complete(url, req); }}
+        req.send();
+    }
+    function ajax_complete(url, req){
+        if (url=="menu_text") {
+            document.getElementById("menutext").innerHTML = req.responseText;
+            setTimeout(function(){ajax("menu_text");}, 5000);
+        } else {
+            document.getElementById("webcam").src = "gushpibot_pic.jpg#" + new Date().getTime();
+        }
+    }
+    ajax("menu_text");
+</script>
+<p><img id="webcam" src="gushpibot_pic.jpg"></p>
+<p id="menutext">Menu</p>
+<p><input type="button" onClick="ajax('left')" value="Left">
+<input type="button" onClick="ajax('up')" value="Up">
+<input type="button" onClick="ajax('stop')" value="Stop">
+<input type="button" onClick="ajax('down')" value="Down">
+<input type="button" onClick="ajax('right')" value="Right"></p>
+<p><input type="button" onClick="ajax('photo')" value="Take Photo"></p>
+<p><input type="button" onClick="ajax('menu_next')" value="Next menu">
+<input type="button" onClick="ajax('menu_prev')" value="Previous menu">
+<input type="button" onClick="ajax('menu_select')" value="Select menu"></p></body></html>
+            """
+            self.wfile.write(html);
+            self.wfile.close();
+
+    def __init__(self):
+        self.post_handlers = {}
+        self.httpd = None
+
+    def serve(self):
+        self.httpd = BaseHTTPServer.HTTPServer(('0.0.0.0', WEBSERVER_PORT), Webserver.WebHandler)
+        self.httpd.post_handlers = self.post_handlers
+        self.t = threading.Thread(target=self.httpd.serve_forever)
+        self.t.daemon = False
+        self.t.start()
+
+    def cleanup(self):
+        if self.httpd:
+            self.httpd.shutdown()
 
 if __name__ == "__main__":
     print("GushPiBot starting...")
