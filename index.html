@@ -1,0 +1,36 @@
+<html>
+<head>
+<title>GushPiBot</title>
+</head>
+<body>
+<h1>GushPiBot</h1>
+<script type="text/javascript">
+    function ajax(url){
+        req = new XMLHttpRequest();
+        req.open("POST", url, true);
+        req.onreadystatechange = function() { if (req.readyState == 4) { ajax_complete(url, req); }}
+        req.send();
+    }
+    function ajax_complete(url, req){
+        if (url=="menu_text") {
+            document.getElementById("menutext").innerHTML = req.responseText;
+            setTimeout(function(){ajax("menu_text");}, 5000);
+        } else {
+            document.getElementById("webcam").src = "gushpibot_pic.jpg#" + new Date().getTime();
+        }
+    }
+    ajax("menu_text");
+</script>
+<p><img id="webcam" src="gushpibot_pic.jpg"></p>
+<p id="menutext">Menu</p>
+<p><input type="button" onClick="ajax('left')" value="Left">
+<input type="button" onClick="ajax('up')" value="Up">
+<input type="button" onClick="ajax('stop')" value="Stop">
+<input type="button" onClick="ajax('down')" value="Down">
+<input type="button" onClick="ajax('right')" value="Right"></p>
+<p><input type="button" onClick="ajax('photo')" value="Take Photo"></p>
+<p><input type="button" onClick="ajax('menu_next')" value="Next menu">
+<input type="button" onClick="ajax('menu_prev')" value="Previous menu">
+<input type="button" onClick="ajax('menu_select')" value="Select menu"></p>
+</body>
+</html>
