@@ -1,5 +1,6 @@
+import time
 import RPi.GPIO as GPIO
-from component import Component
+from component import Component, EventHandler
 
 class Echo(Component):
     """

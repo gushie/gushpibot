@@ -38,9 +38,6 @@ class Speech(Component):
     def cleanup(self):
         self.engine.stop()
 
-    def update_menu(self, menu):
-        menu.add_function("Take Photo", self.take_photo)
-
     def speak(self, message):
         self.engine.say(message)
         self.engine.runAndWait()

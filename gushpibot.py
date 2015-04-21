@@ -227,7 +227,7 @@ class GushPiBot(object):
                 time.sleep(0.1)
 
     def display_ip(self):
-        p = Popen("hostname -I", shell=True, stdout=PIPE
+        p = Popen("hostname -I", shell=True, stdout=PIPE)
         output = p.communicate()[0].split("\n")[0]
         self.display.display_at(1, 0, output.ljust(16))
 
